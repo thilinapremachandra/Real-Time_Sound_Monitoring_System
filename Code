@@ -1,0 +1,78 @@
+import numpy as np
+import sounddevice as sd
+import time
+import queue
+
+# Parameters for the sound monitoring
+SAMPLERATE = 44100  # Sampling rate in Hz (how many samples per second)
+CHUNK_DURATION = 1  # Duration of each audio chunk in seconds
+THRESHOLD_SAFE = 70  # Safe sound level threshold in decibels (dB)
+THRESHOLD_MODERATE = 85  # Moderate sound level threshold in decibels (dB)
+MONITORING_DURATION = 60  # Total monitoring duration in seconds (1 minute)
+
+# Queue to handle the audio data from the stream
+audio_queue = queue.Queue()
+
+# Callback function to fetch audio data from the microphone
+def audio_callback(indata, frames, time, status):
+    """This function is called for each audio chunk from the microphone stream."""
+    if status:
+        print(status)  # Print any status messages (e.g., buffer underrun errors)
+    audio_queue.put(indata.copy())  # Copy the incoming audio data to the queue for processing
+
+# Function to calculate decibel levels from the audio signal
+def calculate_db(audio_chunk):
+    """Convert the audio chunk to decibels (dB)."""
+    rms = np.sqrt(np.mean(audio_chunk**2))  # Calculate the Root Mean Square (RMS) of the audio signal
+    db = 20 * np.log10(rms + 1e-6)  # Convert RMS to decibels, adding a small constant to avoid log(0)
+    return db
+
+# Function for monitoring the sound quality in real-time
+def monitor_sound_quality():
+    """Monitor the sound levels for 1 minute and print warnings based on thresholds."""
+    print("Monitoring sound levels for 1 minute...")
+
+    start_time = time.time()  # Record the start time for the monitoring session
+
+    try:
+        # Open an audio stream for real-time monitoring
+        with sd.InputStream(
+            samplerate=SAMPLERATE, 
+            channels=1,  # Mono audio (1 channel)
+            blocksize=int(SAMPLERATE * CHUNK_DURATION),  # Number of frames per chunk (audio chunk size)
+            callback=audio_callback  # The callback function that processes the audio data
+        ):
+            while True:
+                current_time = time.time()  # Get the current time
+                elapsed_time = current_time - start_time  # Calculate the elapsed time
+
+                if elapsed_time >= MONITORING_DURATION:
+                    print("\nMonitoring complete. Time limit reached.")  # End the monitoring session
+                    break
+
+                try:
+                    # Get the next audio chunk from the queue
+                    audio_chunk = audio_queue.get(timeout=1)
+                    audio_chunk = audio_chunk.flatten()  # Flatten the audio chunk to 1D array for processing
+
+                    # Calculate the decibel level of the audio chunk
+                    db_level = calculate_db(audio_chunk)
+                    print(f"Sound Level: {db_level:.2f} dB")
+
+                    # Check if the sound level exceeds the defined thresholds
+                    if db_level < THRESHOLD_SAFE:
+                        print("Status: Safe")  # Safe sound level
+                    elif THRESHOLD_SAFE <= db_level < THRESHOLD_MODERATE:
+                        print("Status: Moderate - Be cautious!")  # Moderate sound level
+                    else:
+                        print("WARNING: Dangerous sound level! Reduce exposure!")  # Dangerous sound level
+
+                except queue.Empty:
+                    print("No audio data received. Waiting...")  # Handle if no audio data is available
+                    continue
+
+    except KeyboardInterrupt:
+        print("\nMonitoring stopped by user.")  # Stop the monitoring if the user interrupts the process
+
+# Run the sound quality monitoring function
+monitor_sound_quality()
